@@ -1,0 +1,56 @@
+{
+  "name": "api-state-factory",
+  "version": "0.3.1",
+  "description": "A lightweight, type-safe frontend integration library for REST APIs with Redux",
+  "author": "Prajwal D R",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PRAJWAL-D-R/api-state-factory.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "redux",
+    "api",
+    "rest",
+    "typescript",
+    "react"
+  ],
+  "peerDependencies": {
+    "@reduxjs/toolkit": "^2.0.0",
+    "react": "^18.0.0",
+    "react-redux": "^9.0.0"
+  },
+  "devDependencies": {
+    "@reduxjs/toolkit": "^2.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-redux": "^7.1.0",
+    "@vitest/ui": "^1.0.0",
+    "jsdom": "^23.0.0",
+    "react": "^18.0.0",
+    "react-redux": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}
