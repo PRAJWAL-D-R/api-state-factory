@@ -14,11 +14,12 @@ import { endpoint } from './endpoint';
 
 export function defineApi<
   Map extends Record<string, { response?: any; body?: any; query?: any; params?: any }> | unknown = unknown,
-  TEndpoints extends Record<string, EndpointDefinition> = Record<string, EndpointDefinition>
+  TEndpoints extends Record<string, EndpointDefinition<any, any>> = Record<string, EndpointDefinition<any, any>>
 >(
   definition: ApiDefinition<TEndpoints>
 ) {
   const normalizedEndpoints: Record<string, EndpointConfig<any, any>> = {};
+  const instanceConfig: ApiConfig = { ...definition.config };
 
   Object.entries(definition.endpoints).forEach(([key, value]) => {
     if (typeof value === 'string') {
@@ -56,7 +57,7 @@ export function defineApi<
     definition.name,
     definition.baseUrl,
     normalizedEndpoints,
-    definition.config
+    instanceConfig
   );
 
   type EndpointNames = Map extends Record<string, any> ? keyof Map : keyof TEndpoints;
@@ -101,25 +102,31 @@ export function defineApi<
 
       const result = await (store as any).dispatch(thunk(options));
       if (thunk.rejected.match(result)) {
-        throw result.payload || result.error;
+        throw (result.payload as any)?.error || result.error;
       }
-      return result.payload;
+      return (result.payload as any)?.result ?? result.payload;
     };
   });
 
   // We need to support the generic Map in createHooks too, but for now passing normalizedEndpoints
   // createHooks might need update to support the Map generic if we want Hooks to be typed by Map.
   // Casting to any to avoid complex TS issues for now, relying on the return type inference.
-  const hooks = createHooks(definition.name, normalizedEndpoints as any, thunks) as any;
+  const hooks = createHooks(definition.name, definition.baseUrl, normalizedEndpoints as any, thunks) as any;
 
   return {
     slice,
     actions,
+    setConfig: (newConfig: ApiConfig) => {
+      Object.assign(instanceConfig, newConfig);
+    },
+    thunks,
     ...directCalls,
-    ...hooks, // We need to assert hooks type if we want better types
+    ...hooks,
   } as {
     slice: typeof slice;
     actions: typeof actions;
+    setConfig: (newConfig: ApiConfig) => void;
+    thunks: Record<EndpointNames, any>;
   } & DirectCallMethods & {
       // Re-type hooks
       [K in EndpointNames as `use${Capitalize<string & K>}`]: (

@@ -30,12 +30,12 @@ describe('Optimistic Updates & Polling', () => {
                 updateData: endpoint.post('/data', {
                     onQueryStarted: async (_arg, { dispatch, queryFulfilled }) => {
                         // Optimistic update
-                        dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Optimistic' } }));
+                        dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Optimistic' }, params: {} }));
                         try {
                             await queryFulfilled;
                         } catch {
                             // Rollback (simplified for test)
-                            dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Original' } }));
+                            dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Original' }, params: {} }));
                         }
                     }
                 })
@@ -48,13 +48,19 @@ describe('Optimistic Updates & Polling', () => {
         registerStore(store);
 
         // Pre-fill state
-        store.dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Original' } }));
+        store.dispatch(api.actions.updateData({ endpointName: 'getData', data: { id: 1, name: 'Original' }, params: {} }));
 
         // Trigger mutation
         const promise = api.updateData({ body: {} });
 
+        const getSlot = () => {
+            const state = store.getState().optimisticApi.getData;
+            const key = Object.keys(state)[0];
+            return state[key] || { data: null };
+        };
+
         // Check optimistic state
-        expect(store.getState().optimisticApi.getData.data).toEqual({ id: 1, name: 'Optimistic' });
+        expect(getSlot().data).toEqual({ id: 1, name: 'Optimistic' });
 
         // Resolve request
         resolveRequest({
@@ -66,7 +72,7 @@ describe('Optimistic Updates & Polling', () => {
         await promise;
 
         // Should remain optimistic (or be updated by validation, but here we just check it wasn't rolled back)
-        expect(store.getState().optimisticApi.getData.data).toEqual({ id: 1, name: 'Optimistic' });
+        expect(getSlot().data).toEqual({ id: 1, name: 'Optimistic' });
     });
 
     it.skip('should poll at specified interval', async () => {

@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/tool
 import type { EndpointConfig, EndpointState, RequestOptions, ApiConfig } from '../core/types';
 import { executeRequest } from '../core/fetch';
 import { getProvidersByTag } from '../core/registry';
+import { generateCacheKey } from '../core/util';
 
 export function createEndpointSlice<TEndpoints extends Record<string, any>>(
   name: string,
@@ -19,11 +20,7 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
   const initialState: EndpointStates = {} as EndpointStates;
 
   Object.keys(endpoints).forEach((key) => {
-    initialState[key as EndpointName] = {
-      data: null,
-      loading: false,
-      error: null,
-    };
+    initialState[key as EndpointName] = {} as any;
   });
 
   const thunks: Record<string, any> = {};
@@ -33,13 +30,15 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
     const thunk = createAsyncThunk(
       `${name}/${endpointName}`,
       async (options: RequestOptions | undefined, { getState, dispatch, rejectWithValue }) => {
-        // Staletime Check
+        const cacheKey = options?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, options);
+
+        // Staletime Check (Slot-based)
         if (!options?.forceRefetch && config.staleTime !== undefined) {
           const state = getState() as any;
-          const endpointState = state[name]?.[endpointName] as EndpointState;
-          if (endpointState?.data && endpointState.lastFetched) {
-            const isFresh = Date.now() - endpointState.lastFetched < config.staleTime;
-            if (isFresh) return endpointState.data;
+          const slot = state[name]?.[endpointName]?.[cacheKey];
+          if (slot?.data && slot.lastFetched) {
+            const isFresh = Date.now() - slot.lastFetched < config.staleTime;
+            if (isFresh) return { result: slot.data, cacheKey };
           }
         }
 
@@ -72,9 +71,23 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
             });
           }
 
-          return result;
+          // Phase 5: Automatic Endpoint Revalidation (invalidates)
+          if (config.invalidates && config.invalidates.length > 0) {
+            config.invalidates.forEach((targetEndpoint: string) => {
+              // 1. Clear the cache for the target endpoint (all slots)
+              dispatch({ type: `${name}/${targetEndpoint}Reset` });
+
+              // 2. Trigger re-fetch for active listeners (hooks)
+              const providers = getProvidersByTag(`__endpoint__:${targetEndpoint}`);
+              providers.forEach((provider) => {
+                provider.trigger();
+              });
+            });
+          }
+
+          return { result, cacheKey };
         } catch (error: any) {
-          return rejectWithValue(error.message || 'Request failed');
+          return rejectWithValue({ error: error.message || 'Request failed', cacheKey });
         }
       }
     );
@@ -82,20 +95,28 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
     thunks[endpointName] = thunk;
 
     reducers[`${endpointName}Reset`] = (state) => {
-      state[endpointName as EndpointName] = {
-        data: null,
-        loading: false,
-        error: null,
-      };
+      state[endpointName as EndpointName] = {};
     };
   });
 
-  // Global manual update reducer
+  reducers['reset'] = (state) => {
+    Object.keys(endpoints).forEach((key) => {
+      state[key] = {};
+    });
+  };
+
   reducers['updateData'] = (state, action) => {
-    const { endpointName, data } = action.payload;
-    if (state[endpointName]) {
-      state[endpointName].data = data;
-      state[endpointName].lastFetched = Date.now();
+    const { endpointName, data, params } = action.payload;
+    const config = endpoints[endpointName];
+    if (config && state[endpointName]) {
+      const cacheKey = generateCacheKey(baseUrl, config.path, config.method, { params });
+      state[endpointName][cacheKey] = {
+        data,
+        loading: false,
+        isRefreshing: false,
+        error: null,
+        lastFetched: Date.now(),
+      };
     }
   };
 
@@ -107,29 +128,46 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
       Object.entries(thunks).forEach(([endpointName, thunk]) => {
         const config = endpoints[endpointName];
         builder
-          .addCase(thunk.pending, (state: any) => {
-            state[endpointName].loading = true;
-            state[endpointName].error = null;
+          .addCase(thunk.pending, (state: any, action) => {
+            const cacheKey = action.meta.arg?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, action.meta.arg);
+            if (!state[endpointName][cacheKey]) {
+              state[endpointName][cacheKey] = {
+                data: null,
+                loading: true,
+                isRefreshing: true,
+                error: null,
+              };
+            } else {
+              state[endpointName][cacheKey].loading = false;
+              state[endpointName][cacheKey].isRefreshing = true;
+              state[endpointName][cacheKey].error = null;
+            }
           })
           .addCase(thunk.fulfilled, (state: any, action) => {
-            state[endpointName].loading = false;
+            const { result, cacheKey } = action.payload as { result: any; cacheKey: string };
+            const slot = state[endpointName][cacheKey];
 
-            if (config.merge && state[endpointName].data) {
-              state[endpointName].data = config.merge(
-                state[endpointName].data,
-                action.payload,
-                action.meta.arg || {}
-              );
+            slot.loading = false;
+            slot.isRefreshing = false;
+
+            if (typeof config.merge === 'function' && slot.data) {
+              slot.data = config.merge(slot.data, result, action.meta.arg || {});
+            } else if (config.merge === true && Array.isArray(slot.data) && Array.isArray(result)) {
+              slot.data = [...slot.data, ...result];
             } else {
-              state[endpointName].data = action.payload;
+              slot.data = result;
             }
 
-            state[endpointName].lastFetched = Date.now();
+            slot.lastFetched = Date.now();
           })
           .addCase(thunk.rejected, (state: any, action) => {
-            state[endpointName].loading = false;
-            state[endpointName].error =
-              action.payload || action.error.message || 'Unknown error';
+            const { error, cacheKey } = (action.payload as any) || { error: action.error.message, cacheKey: generateCacheKey(baseUrl, config.path, config.method, action.meta.arg) };
+            const slot = state[endpointName][cacheKey];
+            if (slot) {
+              slot.loading = false;
+              slot.isRefreshing = false;
+              slot.error = error || 'Unknown error';
+            }
           });
       });
     },

@@ -60,58 +60,104 @@ export async function executeRequest<TResponse>(
       const finalUrl = isAbsolute ? url.toString() : url.pathname + url.search;
 
       // Prepare Headers
-      let headers = new Headers({
-        'Content-Type': 'application/json',
+      let headers: Record<string, string> = {
         ...finalOptions?.headers,
-      });
+      };
+
+      const isFormData = typeof window !== 'undefined' && finalOptions?.body instanceof FormData;
+
+      if (!isFormData && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+
+      // Simple Headers Callback (Global)
+      if (globalConfig.headers) {
+        const globalHeaders = await globalConfig.headers();
+        Object.entries(globalHeaders).forEach(([key, value]) => {
+          if (!headers[key]) headers[key] = value;
+        });
+      }
+
+      // Simple Headers Callback (Instance)
+      if (instanceConfig?.headers) {
+        const instanceHeaders = await instanceConfig.headers();
+        Object.entries(instanceHeaders).forEach(([key, value]) => {
+          if (!headers[key]) headers[key] = value;
+        });
+      }
+
+      let finalHeaders: Headers | Record<string, string> = headers;
 
       if (instanceConfig?.prepareHeaders) {
-        const result = instanceConfig.prepareHeaders(headers, {
+        let headersObj = new Headers(headers);
+        const result = instanceConfig.prepareHeaders(headersObj, {
           getState: context.getState,
           endpoint: config.path,
         });
         if (result instanceof Headers) {
-          headers = result;
+          finalHeaders = result;
+        } else {
+          finalHeaders = headersObj;
         }
       }
 
       const fetchOptions: RequestInit = {
         method: config.method,
-        headers,
+        headers: finalHeaders,
       };
 
       if (finalOptions?.body && (config.method === 'POST' || config.method === 'PUT' || config.method === 'PATCH')) {
-        fetchOptions.body = JSON.stringify(finalOptions.body);
+        fetchOptions.body = isFormData ? (finalOptions.body as any) : JSON.stringify(finalOptions.body);
       }
 
-      const response = await fetch(finalUrl, fetchOptions);
+      let attempts = 0;
+      const maxAttempts = (config.retry || 0) + 1;
+      let lastError: any;
 
-      if (!response.ok) {
-        // Phase 1: Response Error Interceptor (Instance then Global)
-        if (instanceConfig?.interceptors?.onResponseError) {
-          await instanceConfig.interceptors.onResponseError(response);
-        }
-        if (globalConfig.interceptors?.onResponseError) {
-          await globalConfig.interceptors.onResponseError(response);
-        }
+      while (attempts < maxAttempts) {
+        try {
+          const response = await fetch(finalUrl, fetchOptions);
 
-        // Global onError Handler
-        if (instanceConfig?.onError) {
-          instanceConfig.onError(
-            { status: response.status, statusText: response.statusText, response },
-            { dispatch: context.dispatch, getState: context.getState }
-          );
-        }
+          if (!response.ok) {
+            // Phase 1: Response Error Interceptor (Instance then Global)
+            if (instanceConfig?.interceptors?.onResponseError) {
+              await instanceConfig.interceptors.onResponseError(response);
+            }
+            if (globalConfig.interceptors?.onResponseError) {
+              await globalConfig.interceptors.onResponseError(response);
+            }
 
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            // Global and Instance onError Handler
+            if (instanceConfig?.onError) {
+              instanceConfig.onError(
+                { status: response.status, statusText: response.statusText, response },
+                { dispatch: context.dispatch, getState: context.getState }
+              );
+            } else if (globalConfig.onError) {
+              globalConfig.onError(
+                { status: response.status, statusText: response.statusText, response },
+                { dispatch: context.dispatch, getState: context.getState }
+              );
+            }
+
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return await response.json();
+          }
+
+          return (await response.text()) as unknown as TResponse;
+        } catch (error) {
+          attempts++;
+          lastError = error;
+          if (attempts < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
       }
-
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        return await response.json();
-      }
-
-      return (await response.text()) as unknown as TResponse;
+      throw lastError;
     } finally {
       // Clean up in-flight tracker
       deleteInFlightRequest(cacheKey);

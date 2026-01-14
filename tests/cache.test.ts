@@ -93,6 +93,8 @@ describe('Auto-Fetch & Cache TTL', () => {
 
         const result = await api.getData();
         expect(result).toEqual({ userName: 'john_doe' });
-        expect(store.getState().transformApi.getData.data).toEqual({ userName: 'john_doe' });
+        const state = store.getState().transformApi.getData;
+        const key = Object.keys(state)[0];
+        expect(state[key].data).toEqual({ userName: 'john_doe' });
     });
 });

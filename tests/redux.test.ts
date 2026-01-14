@@ -76,15 +76,21 @@ describe('Redux integration', () => {
 
     registerStore(store);
 
-    expect(store.getState().test.getData.loading).toBe(false);
-    expect(store.getState().test.getData.data).toBe(null);
+    const getSlot = () => {
+      const state = store.getState().test.getData;
+      const key = Object.keys(state)[0]; // Since we only have one call
+      return state[key] || { data: null, loading: false };
+    };
+
+    expect(getSlot().loading).toBe(false);
+    expect(getSlot().data).toBe(null);
 
     const promise = api.getData();
-    expect(store.getState().test.getData.loading).toBe(true);
+    expect(getSlot().loading).toBe(true);
 
     await promise;
-    expect(store.getState().test.getData.loading).toBe(false);
-    expect(store.getState().test.getData.data).toEqual(mockData);
+    expect(getSlot().loading).toBe(false);
+    expect(getSlot().data).toEqual(mockData);
   });
 
   it('handles error state correctly', async () => {
@@ -109,8 +115,11 @@ describe('Redux integration', () => {
     registerStore(store);
 
     await expect(api.getData()).rejects.toThrow('Network error');
-    expect(store.getState().test.getData.loading).toBe(false);
-    expect(store.getState().test.getData.error).toBeTruthy();
+
+    const state = store.getState().test.getData;
+    const key = Object.keys(state)[0];
+    expect(state[key].loading).toBe(false);
+    expect(state[key].error).toBeTruthy();
   });
 
   it('sends GET request correctly', async () => {

@@ -43,14 +43,15 @@ describe('Pagination & Merge', () => {
         registerStore(store);
 
         // Fetch page 1
-        await api.getList({ params: { page: 1 } });
-        expect(store.getState().paginationApi.getList.data).toEqual(page1);
+        await api.getList({ params: { page: 1 }, cacheKey: 'list' });
+        const state = () => store.getState().paginationApi.getList['list'];
+        expect(state().data).toEqual(page1);
 
         // Fetch page 2
-        await api.getList({ params: { page: 2 }, forceRefetch: true });
+        await api.getList({ params: { page: 2 }, forceRefetch: true, cacheKey: 'list' });
 
         // Should be merged
-        expect(store.getState().paginationApi.getList.data).toEqual({
+        expect(state().data).toEqual({
             items: [1, 2, 3, 4],
             nextPage: 3
         });
