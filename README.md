@@ -21,6 +21,24 @@ Most state management libraries require you to write hundreds of lines of "glue 
 
 ---
 
+## 🎯 Best Use Cases
+
+**API State Factory** is an industrial-grade tool designed for:
+- **HRMS & ERP Systems**: Where complex dependencies and data consistency are critical.
+- **Admin Dashboards & CRMs**: Where rapid development of hundreds of CRUD endpoints is required.
+- **Fintech & Banking**: Where strict type safety and global error handling are non-negotiable.
+- **Large Enterprise Apps**: Where reducing Redux boilerplate is a structural necessity.
+
+## 🚫 When to Consider Alternatives
+
+While powerful, it is **not** suited for:
+- **Real-time Apps**: High-frequency trading or gaming (use WebSockets/Socket.io).
+- **GraphQL-Dedicated Projects**: Use Apollo Client or Urql if you rely on GraphQL schemas.
+- **Collaborative Editors**: Google Docs-style syncing (requires CRDTs/OT).
+- **Hyper-Lightweight Pages**: If you don't already use Redux, this is not a standalone fetcher.
+
+---
+
 ## 📦 Installation
 
 ```bash
