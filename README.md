@@ -139,6 +139,51 @@ await store.dispatch(expenseApi.thunks.getExpenses());
 
 ---
 
+## 🏗️ Enterprise Best Practices
+
+### 1. Structure Your API by Domain
+For large applications, split your API definitions by feature domain to keep code maintainable.
+
+```typescript
+// src/api/users.ts
+export const userApi = defineApi({ name: 'users', ... });
+
+// src/api/products.ts
+export const productApi = defineApi({ name: 'products', ... });
+
+// src/store.ts
+export const store = createApiStore({
+  apis: [userApi, productApi]
+});
+```
+
+### 2. Global Error Handling
+Centralize your error logic to handle 401s (Unauthorized) or 500s (Server Error) in one place.
+
+```typescript
+setGlobalConfig({
+  onError: (error) => {
+    if (error.status === 401) {
+      window.location.href = '/login';
+    }
+  }
+});
+```
+
+### 3. Optimistic Updates
+Make your UI feel instant by updating the cache immediately.
+
+```typescript
+const [updateUser] = userApi.useUpdateUser({
+  onOptimisticUpdate: (params) => ({
+    ...currentUser,
+    ...params.body
+  })
+});
+```
+
+---
+
 ## ⚡ Comparison
 
 | Feature | Legacy Setup | **API State Factory** |

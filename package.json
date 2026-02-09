@@ -1,6 +1,6 @@
 {
   "name": "api-state-factory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A lightweight, type-safe frontend integration library for REST APIs with Redux",
   "author": "Prajwal D R",
   "license": "MIT",
