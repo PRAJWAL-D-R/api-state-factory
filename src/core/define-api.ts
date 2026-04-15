@@ -1,7 +1,19 @@
 import type { EndpointConfig, RequestOptions, ApiConfig, EndpointDefinition } from './types';
 import { createEndpointSlice } from '../redux/slice-generator';
 import { getStore } from '../redux/store-registry';
-import { createHooks } from '../react/hooks-generator';
+import { createHooks, type HookResult } from '../react/hooks-generator';
+
+function toError(err: unknown): Error {
+  if (err instanceof Error) return err;
+  if (err && typeof err === 'object' && typeof (err as any).message === 'string') {
+    const e = new Error((err as any).message);
+    Object.assign(e, err);
+    return e;
+  }
+  if (typeof err === 'string') return new Error(err);
+  if (typeof err === 'number' || typeof err === 'boolean' || typeof err === 'bigint') return new Error(String(err));
+  return new Error('Request failed');
+}
 
 export interface ApiDefinition<TEndpoints extends Record<string, any>> {
   name: string;
@@ -102,9 +114,11 @@ export function defineApi<
 
       const result = await (store as any).dispatch(thunk(options));
       if (thunk.rejected.match(result)) {
-        throw (result.payload as any)?.error || result.error;
+        const payload: any = result.payload;
+        throw toError(payload?.error ?? payload ?? result.error);
       }
-      return (result.payload as any)?.result ?? result.payload;
+      const payload: any = result.payload;
+      return payload?.result ?? payload;
     };
   });
 
@@ -131,6 +145,6 @@ export function defineApi<
       // Re-type hooks
       [K in EndpointNames as `use${Capitalize<string & K>}`]: (
         arg?: RequestOptions<ResolveBody<K>> | string | number
-      ) => { data: ResolveResponse<K> | null; loading: boolean; error: any; execute: (opt?: any) => Promise<ResolveResponse<K>> }
+      ) => HookResult<ResolveResponse<K>, ResolveBody<K>>
     };
 }

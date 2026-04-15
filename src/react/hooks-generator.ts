@@ -6,6 +6,27 @@ import { getStore } from '../redux/store-registry';
 import { registerTagProvider, unregisterTagProvider } from '../core/registry';
 import { generateCacheKey } from '../core/util';
 
+const DEFAULT_RESULT_STATE = Object.freeze({
+  data: null,
+  loading: false,
+  isRefreshing: false,
+  error: null,
+});
+
+const EMPTY_OPTIONS = Object.freeze({}) as RequestOptions<any>;
+
+function toError(err: unknown): Error {
+  if (err instanceof Error) return err;
+  if (err && typeof err === 'object' && typeof (err as any).message === 'string') {
+    const e = new Error((err as any).message);
+    Object.assign(e, err);
+    return e;
+  }
+  if (typeof err === 'string') return new Error(err);
+  if (typeof err === 'number' || typeof err === 'boolean' || typeof err === 'bigint') return new Error(String(err));
+  return new Error('Request failed');
+}
+
 export function createHooks<TEndpoints extends Record<string, any>>(
   apiName: string,
   baseUrl: string,
@@ -27,7 +48,7 @@ export function createHooks<TEndpoints extends Record<string, any>>(
     const hookName = `use${capitalizeFirst(endpointName)}` as keyof HookMethods;
     const thunk = thunks[endpointName];
 
-    (hooks as Record<string, (options?: RequestOptions<unknown>) => HookResult<unknown, unknown>>)[hookName] = (options?: any) => {
+    const useHook = (options?: any): HookResult<any, any> => {
       const normalizedOptions = useMemo(() => {
         if (typeof options === 'string' || typeof options === 'number') {
           const match = config.path.match(/:([a-zA-Z0-9_]+)/);
@@ -35,36 +56,29 @@ export function createHooks<TEndpoints extends Record<string, any>>(
             return { params: { [match[1]]: options } } as RequestOptions<any>;
           }
         }
-        return (options || {}) as RequestOptions<any>;
-      }, [JSON.stringify(options)]);
+        if (options === undefined || options === null) return EMPTY_OPTIONS;
+        return options as RequestOptions<any>;
+      }, [options]);
 
       const lastOptions = useRef<RequestOptions<unknown>>(normalizedOptions);
 
-      const cacheKey = useMemo(() =>
-        normalizedOptions?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, normalizedOptions)
-        , [normalizedOptions]);
+      const cacheKey = useMemo(
+        () => normalizedOptions?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, normalizedOptions),
+        [baseUrl, config.method, config.path, normalizedOptions]
+      );
 
-      // Update lastOptions whenever options change
       useEffect(() => {
         lastOptions.current = normalizedOptions;
       }, [normalizedOptions]);
 
-      const state = useSelector(
-        (rootState: Record<string, unknown>) => {
-          const endpointState = (rootState[apiName] as Record<string, EndpointState>)?.[endpointName];
-          return endpointState?.[cacheKey] || {
-            data: null,
-            loading: false,
-            isRefreshing: false,
-            error: null,
-          };
-        }
-      );
+      const state = useSelector((rootState: Record<string, unknown>) => {
+        const endpointState = (rootState[apiName] as Record<string, EndpointState>)?.[endpointName];
+        return endpointState?.[cacheKey] || DEFAULT_RESULT_STATE;
+      });
 
       const execute = useCallback(async (arg?: any) => {
         let execOptions = typeof arg === 'object' && arg !== null ? arg : {};
 
-        // Smart Argument Parsing for Hooks
         if (typeof arg === 'string' || typeof arg === 'number') {
           const match = config.path.match(/:([a-zA-Z0-9_]+)/);
           if (match) {
@@ -72,10 +86,8 @@ export function createHooks<TEndpoints extends Record<string, any>>(
           }
         }
 
-        // Merge mount-time options with execution-time options
         const mergedOptions = { ...lastOptions.current, ...execOptions };
 
-        // If merge strategy is enabled, we stay in the same slot
         if (config.merge && !mergedOptions.cacheKey) {
           mergedOptions.cacheKey = cacheKey;
         }
@@ -83,32 +95,30 @@ export function createHooks<TEndpoints extends Record<string, any>>(
         const store = getStore();
         const result = await (store as any).dispatch(thunk(mergedOptions));
         if (thunk.rejected.match(result)) {
-          throw result.payload || result.error;
+          const payload: any = result.payload;
+          throw toError(payload?.error ?? payload ?? result.error);
         }
-        return result.payload;
-      }, [cacheKey]);
+        const payload: any = result.payload;
+        return payload?.result ?? payload;
+      }, [cacheKey, thunk]);
 
-
-      // Auto-fetch for queries
       useEffect(() => {
         const isQuery = config.type === 'query' || (!config.type && config.method === 'GET');
         if (isQuery && !normalizedOptions?.skip) {
           execute();
         }
-      }, [execute, JSON.stringify(normalizedOptions?.params), normalizedOptions?.skip]);
+      }, [execute, config.method, config.type, cacheKey, normalizedOptions?.skip]);
 
-      // Polling
       useEffect(() => {
-        if (options?.pollingInterval && options.pollingInterval > 0 && !options.skip) {
+        if (normalizedOptions?.pollingInterval && normalizedOptions.pollingInterval > 0 && !normalizedOptions.skip) {
           const interval = setInterval(() => {
             execute({ forceRefetch: true });
-          }, options.pollingInterval);
+          }, normalizedOptions.pollingInterval);
           return () => clearInterval(interval);
         }
         return undefined;
-      }, [execute, options?.pollingInterval, options?.skip]);
+      }, [execute, normalizedOptions?.pollingInterval, normalizedOptions?.skip]);
 
-      // Register this endpoint as a provider for tags AND its own endpoint name
       useEffect(() => {
         const tags = [...(config.providesTags || []), `__endpoint__:${endpointName}`];
 
@@ -124,10 +134,12 @@ export function createHooks<TEndpoints extends Record<string, any>>(
       }, [execute]);
 
       return {
-        ...state,
+        ...(state as any),
         execute,
       };
     };
+
+    (hooks as Record<string, (options?: RequestOptions<unknown>) => HookResult<unknown, unknown>>)[hookName] = useHook as any;
   });
 
   return hooks;

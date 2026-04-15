@@ -1,8 +1,66 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import type { EndpointConfig, EndpointState, RequestOptions, ApiConfig } from '../core/types';
 import { executeRequest } from '../core/fetch';
+import { getGlobalConfig } from '../core/config';
 import { getProvidersByTag } from '../core/registry';
 import { generateCacheKey } from '../core/util';
+
+function serializePrimitiveError(error: unknown) {
+  if (typeof error === 'string') return { message: error };
+  if (typeof error === 'number' || typeof error === 'boolean' || typeof error === 'bigint') return { message: String(error) };
+  return { message: 'Request failed' };
+}
+
+function serializeObjectError(anyErr: any) {
+  if (typeof anyErr?.message !== 'string') return { message: 'Request failed' };
+  return {
+    message: anyErr.message,
+    name: typeof anyErr.name === 'string' ? anyErr.name : undefined,
+    status: typeof anyErr.status === 'number' ? anyErr.status : undefined,
+    statusText: typeof anyErr.statusText === 'string' ? anyErr.statusText : undefined,
+    url: typeof anyErr.url === 'string' ? anyErr.url : undefined,
+    body: anyErr.body,
+  };
+}
+
+function defaultSerializeError(error: unknown) {
+  if (error && typeof error === 'object') return serializeObjectError(error as any);
+  return serializePrimitiveError(error);
+}
+
+function getFreshSlotData(
+  state: any,
+  apiName: string,
+  endpointName: string,
+  cacheKey: string,
+  staleTime: number
+) {
+  const slot = state?.[apiName]?.[endpointName]?.[cacheKey];
+  if (!slot?.data || !slot.lastFetched) return undefined;
+  const isFresh = Date.now() - slot.lastFetched < staleTime;
+  return isFresh ? slot.data : undefined;
+}
+
+function triggerInvalidatedTags(invalidatesTags: string[] | undefined) {
+  if (!invalidatesTags?.length) return;
+  invalidatesTags.forEach((tag) => {
+    const providers = getProvidersByTag(tag);
+    providers.forEach((provider) => provider.trigger());
+  });
+}
+
+function revalidateEndpoints(
+  dispatch: any,
+  apiName: string,
+  invalidates: string[] | undefined
+) {
+  if (!invalidates?.length) return;
+  invalidates.forEach((targetEndpoint) => {
+    dispatch({ type: `${apiName}/${targetEndpoint}Reset` });
+    const providers = getProvidersByTag(`__endpoint__:${targetEndpoint}`);
+    providers.forEach((provider) => provider.trigger());
+  });
+}
 
 export function createEndpointSlice<TEndpoints extends Record<string, any>>(
   name: string,
@@ -32,14 +90,10 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
       async (options: RequestOptions | undefined, { getState, dispatch, rejectWithValue }) => {
         const cacheKey = options?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, options);
 
-        // Staletime Check (Slot-based)
         if (!options?.forceRefetch && config.staleTime !== undefined) {
           const state = getState() as any;
-          const slot = state[name]?.[endpointName]?.[cacheKey];
-          if (slot?.data && slot.lastFetched) {
-            const isFresh = Date.now() - slot.lastFetched < config.staleTime;
-            if (isFresh) return { result: slot.data, cacheKey };
-          }
+          const fresh = getFreshSlotData(state, name, endpointName, cacheKey, config.staleTime);
+          if (fresh !== undefined) return { result: fresh, cacheKey };
         }
 
         try {
@@ -61,33 +115,15 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
             result = await config.transformResponse(result);
           }
 
-          // Phase 2: Tag Invalidation Logic
-          if (config.invalidatesTags && config.invalidatesTags.length > 0) {
-            config.invalidatesTags.forEach((tag: string) => {
-              const providers = getProvidersByTag(tag);
-              providers.forEach((provider) => {
-                provider.trigger();
-              });
-            });
-          }
-
-          // Phase 5: Automatic Endpoint Revalidation (invalidates)
-          if (config.invalidates && config.invalidates.length > 0) {
-            config.invalidates.forEach((targetEndpoint: string) => {
-              // 1. Clear the cache for the target endpoint (all slots)
-              dispatch({ type: `${name}/${targetEndpoint}Reset` });
-
-              // 2. Trigger re-fetch for active listeners (hooks)
-              const providers = getProvidersByTag(`__endpoint__:${targetEndpoint}`);
-              providers.forEach((provider) => {
-                provider.trigger();
-              });
-            });
-          }
+          triggerInvalidatedTags(config.invalidatesTags);
+          revalidateEndpoints(dispatch, name, config.invalidates);
 
           return { result, cacheKey };
         } catch (error: any) {
-          return rejectWithValue({ error: error.message || 'Request failed', cacheKey });
+          const globalConfig = getGlobalConfig();
+          const serializer = apiInstanceConfig?.serializeError || globalConfig.serializeError || defaultSerializeError;
+          const serialized = serializer(error);
+          return rejectWithValue({ error: serialized, cacheKey });
         }
       }
     );
@@ -130,21 +166,30 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
         builder
           .addCase(thunk.pending, (state: any, action) => {
             const cacheKey = action.meta.arg?.cacheKey || generateCacheKey(baseUrl, config.path, config.method, action.meta.arg);
-            if (!state[endpointName][cacheKey]) {
+            const existing = state[endpointName][cacheKey];
+            if (existing) {
+              const hasData = existing.data !== null && existing.data !== undefined;
+              if (hasData) {
+                existing.loading = false;
+                existing.isRefreshing = true;
+              } else {
+                existing.loading = true;
+                existing.isRefreshing = false;
+              }
+              existing.error = null;
+            } else {
               state[endpointName][cacheKey] = {
                 data: null,
                 loading: true,
                 isRefreshing: true,
                 error: null,
               };
-            } else {
-              state[endpointName][cacheKey].loading = false;
-              state[endpointName][cacheKey].isRefreshing = true;
-              state[endpointName][cacheKey].error = null;
             }
           })
           .addCase(thunk.fulfilled, (state: any, action) => {
-            const { result, cacheKey } = action.payload as { result: any; cacheKey: string };
+            const payload: any = action.payload;
+            const result = payload.result;
+            const cacheKey = payload.cacheKey as string;
             const slot = state[endpointName][cacheKey];
 
             slot.loading = false;
@@ -161,12 +206,15 @@ export function createEndpointSlice<TEndpoints extends Record<string, any>>(
             slot.lastFetched = Date.now();
           })
           .addCase(thunk.rejected, (state: any, action) => {
-            const { error, cacheKey } = (action.payload as any) || { error: action.error.message, cacheKey: generateCacheKey(baseUrl, config.path, config.method, action.meta.arg) };
+            const fallbackCacheKey = generateCacheKey(baseUrl, config.path, config.method, action.meta.arg);
+            const payload: any = action.payload;
+            const cacheKey = payload?.cacheKey ?? fallbackCacheKey;
+            const error = payload?.error ?? (action.error || { message: action.error.message });
             const slot = state[endpointName][cacheKey];
             if (slot) {
               slot.loading = false;
               slot.isRefreshing = false;
-              slot.error = error || 'Unknown error';
+              slot.error = error || { message: 'Unknown error' };
             }
           });
       });

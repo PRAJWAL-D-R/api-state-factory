@@ -25,6 +25,7 @@ export interface EndpointConfig<TResponse = unknown, TBody = never, TKeys extend
     }
   ) => Promise<void> | void;
   retry?: number; // Number of retries on failure
+  retryDelayMs?: number; // Delay between retries (ms)
   merge?: boolean | ((currentCacheData: TResponse, responseData: TResponse, arg: RequestOptions<TBody>) => TResponse);
 }
 
@@ -36,6 +37,16 @@ export interface RequestOptions<TBody = unknown> {
   skip?: boolean; // For hooks: skip auto-fetch
   forceRefetch?: boolean; // Override staleTime
   pollingInterval?: number; // Auto-refetch interval in ms
+  signal?: AbortSignal;
+}
+
+export interface ApiRequestError {
+  message: string;
+  status?: number;
+  statusText?: string;
+  url?: string;
+  body?: unknown;
+  cause?: unknown;
 }
 
 export interface ResultState<TData = unknown> {
@@ -53,6 +64,15 @@ export interface ApiConfig {
   prepareHeaders?: (headers: Headers, api: { getState: any; endpoint: string }) => Headers | void;
   headers?: () => Record<string, string> | Promise<Record<string, string>>;
   onError?: (error: any, api: { dispatch: any; getState: any }) => void;
+  /**
+   * When running in SSR/Node with a relative baseUrl (e.g. "/api"), provide an absolute origin
+   * like "https://example.com" so requests resolve correctly.
+   */
+  ssrBaseUrl?: string;
+  /**
+   * Customize how errors are stored in Redux (must be serializable).
+   */
+  serializeError?: (error: unknown) => any;
 }
 
 export type EndpointDefinition<TResponse = unknown, TBody = unknown, TKeys extends string = string> =

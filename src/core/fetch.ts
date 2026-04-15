@@ -1,7 +1,17 @@
-import type { EndpointConfig, RequestOptions, ApiConfig } from './types';
+import type { EndpointConfig, RequestOptions, ApiConfig, ApiRequestError } from './types';
 import { getGlobalConfig } from './config';
 import { generateCacheKey } from './util';
 import { getInFlightRequest, setInFlightRequest, deleteInFlightRequest } from './registry';
+
+async function readErrorBody(response: Response): Promise<unknown> {
+  try {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) return await response.json();
+    return await response.text();
+  } catch {
+    return undefined;
+  }
+}
 
 export async function executeRequest<TResponse>(
   baseUrl: string,
@@ -57,7 +67,18 @@ export async function executeRequest<TResponse>(
         });
       }
 
-      const finalUrl = isAbsolute ? url.toString() : url.pathname + url.search;
+      const relativeUrl = url.pathname + url.search;
+      const ssrBaseUrl = instanceConfig?.ssrBaseUrl || globalConfig.ssrBaseUrl;
+      const isServer = typeof window === 'undefined';
+
+      let finalUrl: string;
+      if (isAbsolute) {
+        finalUrl = url.toString();
+      } else if (isServer && ssrBaseUrl) {
+        finalUrl = new URL(relativeUrl, ssrBaseUrl).toString();
+      } else {
+        finalUrl = relativeUrl;
+      }
 
       // Prepare Headers
       let headers: Record<string, string> = {
@@ -104,6 +125,7 @@ export async function executeRequest<TResponse>(
       const fetchOptions: RequestInit = {
         method: config.method,
         headers: finalHeaders,
+        signal: finalOptions?.signal,
       };
 
       if (finalOptions?.body && (config.method === 'POST' || config.method === 'PUT' || config.method === 'PATCH')) {
@@ -113,12 +135,14 @@ export async function executeRequest<TResponse>(
       let attempts = 0;
       const maxAttempts = (config.retry || 0) + 1;
       let lastError: any;
+      const baseRetryDelayMs = (config as any).retryDelayMs ?? 250;
 
       while (attempts < maxAttempts) {
         try {
           const response = await fetch(finalUrl, fetchOptions);
 
           if (!response.ok) {
+            const errorBody = await readErrorBody(response);
             // Phase 1: Response Error Interceptor (Instance then Global)
             if (instanceConfig?.interceptors?.onResponseError) {
               await instanceConfig.interceptors.onResponseError(response);
@@ -130,17 +154,24 @@ export async function executeRequest<TResponse>(
             // Global and Instance onError Handler
             if (instanceConfig?.onError) {
               instanceConfig.onError(
-                { status: response.status, statusText: response.statusText, response },
+                { status: response.status, statusText: response.statusText, url: finalUrl, body: errorBody, response },
                 { dispatch: context.dispatch, getState: context.getState }
               );
             } else if (globalConfig.onError) {
               globalConfig.onError(
-                { status: response.status, statusText: response.statusText, response },
+                { status: response.status, statusText: response.statusText, url: finalUrl, body: errorBody, response },
                 { dispatch: context.dispatch, getState: context.getState }
               );
             }
 
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const err: ApiRequestError = {
+              message: `HTTP ${response.status}: ${response.statusText}`,
+              status: response.status,
+              statusText: response.statusText,
+              url: finalUrl,
+              body: errorBody,
+            };
+            throw err;
           }
 
           const contentType = response.headers.get('content-type');
@@ -151,9 +182,10 @@ export async function executeRequest<TResponse>(
           return (await response.text()) as unknown as TResponse;
         } catch (error) {
           attempts++;
-          lastError = error;
+          lastError = error as any;
           if (attempts < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const delayMs = Math.min(1000, baseRetryDelayMs * attempts);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
         }
       }

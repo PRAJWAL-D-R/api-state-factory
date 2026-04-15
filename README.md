@@ -86,6 +86,17 @@ export const store = createApiStore({
 });
 ```
 
+#### **Integrating into an Existing Store**
+If you already have a Redux store, simply register it so the library can dispatch actions:
+
+```typescript
+import { registerStore } from 'api-state-factory';
+import { yourExistingStore } from './store';
+
+// Call this once during app initialization
+registerStore(yourExistingStore);
+```
+
 ### 3. Use in Components
 Hooks are reactive by default—they fetch on mount and re-fetch when params change.
 
@@ -97,6 +108,7 @@ function ExpenseList() {
 
   return (
     <div>
+      {/* isRefreshing is true during background updates */}
       {isRefreshing && <span>Updating...</span>}
       {data.map(exp => <Item key={exp.id} {...exp} />)}
     </div>
@@ -107,6 +119,18 @@ function ExpenseList() {
 ---
 
 ## 🛠️ Advanced Features
+
+### Direct Call Methods (Service Layer)
+Need to trigger an API call from outside React (e.g., inside another Redux thunk, or a utility function)? Every endpoint is available as an async method directly on the API object.
+
+```typescript
+// No hooks needed!
+const data = await expenseApi.getExpenses();
+console.log('Got data:', data);
+
+// Supports primitives for ID-based paths (e.g. /expenses/:id)
+const single = await expenseApi.getExpense(123);
+```
 
 ### Parameterized Caching (Multi-Slot Storage)
 Unlike basic libraries that store one result per endpoint, API State Factory partitions data by parameters. 
