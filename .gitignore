@@ -46,12 +46,3 @@ yarn-error.log*
 .temp/
 .cache/
 temp/
-
-# Interview & Documentation Files (keep local, don't publish/push)
-INTERVIEW_PREPARATION_GUIDE.md
-QUICK_INTERVIEW_CHEAT_SHEET.md
-start_here.md
-PRACTICE_INTERVIEW_SCRIPT.md
-VISUAL_EXPLANATION_GUIDE.md
-STORY_EXPLANATION.md
-START_HERE.md

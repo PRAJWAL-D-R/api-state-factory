@@ -208,6 +208,17 @@ const [updateUser] = userApi.useUpdateUser({
 
 ---
 
+## 📖 Documentation
+
+For detailed guides, reference documentation, and architecture diagrams, check out the following:
+- **[Getting Started](file:///d:/Mine/My_Packages/docs/GETTING_STARTED.md)**: Jump here to learn the basics of the library and explore our documentation paths.
+- **[Developer Guide](file:///d:/Mine/My_Packages/docs/DEVELOPER_GUIDE.md)**: Read our main reference to learn how to register store, utilize interceptors, implement infinite scroll, optimistic updates, and mock API tests.
+- **[Architecture & Data Flow](file:///d:/Mine/My_Packages/docs/ARCHITECTURE.md)**: Explore the data synchronization cycles, caching slots structures, and TypeScript path parameter parsing maps.
+- **[Production Case Study](file:///d:/Mine/My_Packages/docs/CASE_STUDY_HRMS.md)**: Walk through our real-world case study of how this library reduced Redux boilerplate from 7,500 lines to under 130 lines in an enterprise HRMS.
+- **[Quick Reference Cheatsheet](file:///d:/Mine/My_Packages/docs/QUICK_REFERENCE.md)**: A rapid FAQ, RTK Query comparison matrix, and project roadmap guide.
+
+---
+
 ## ⚡ Comparison
 
 | Feature | Legacy Setup | **API State Factory** |
